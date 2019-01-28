@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 const os = require('os')
-const fs = require('fs-extra')
-const request = require('request')
+const fs = require('fs')
 const { execSync } = require('child_process')
 
-const { USER_AGENT } = require('../src/util/constants')
-const { downloadFile } = require('../src/util/download')
-const log = require('../src/util/log')
+const log = console.error.bind(console) // eslint-disable-line no-console
 
 const HOME = process.env.HOME || os.homedir()
-const RELEASE_URL = 'https://d236jo9e8rrdox.cloudfront.net/yvm-releases'
+const RELEASE_API_URL = 'https://d236jo9e8rrdox.cloudfront.net/yvm-releases'
 const USE_LOCAL = process.env.USE_LOCAL || false
 const INSTALL_VERSION = process.env.INSTALL_VERSION || null
 const YVM_DIR = process.env.YVM_INSTALL_DIR || `${HOME}/.yvm`
@@ -19,45 +16,38 @@ const YVM_DIR_VARIABLE = 'YVM_DIR'
 const EXPORT_YVM_DIR_STRING = `export ${YVM_DIR_VARIABLE}=${YVM_DIR}`
 const EXECUTE_SOURCE_STRING = `[ -r $${YVM_DIR_VARIABLE}/yvm.sh ] && source $${YVM_DIR_VARIABLE}/yvm.sh`
 
+async function ensureDir(dirPath) {
+    if (fs.existsSync(dirPath)) return
+    fs.mkdirSync(dirPath)
+}
+
 function getVersionDownloadUrl(version) {
     return `https://github.com/tophat/yvm/releases/download/${version}/yvm.zip`
 }
 
 async function getLatestYvmVersion() {
-    const options = {
-        url: RELEASE_URL,
-        headers: {
-            'User-Agent': USER_AGENT,
-        },
-    }
-    return new Promise((resolve, reject) => {
-        request.get(options, (error, response, body) => {
-            if (error || response.statusCode !== 200) {
-                if (response.body) {
-                    if (error) {
-                        log(error)
-                    }
-                    reject(response.body)
-                    return
-                }
-                reject(error)
-            } else {
-                const {
-                    tag_name: versionTag,
-                    assets: [{ browser_download_url: downloadUrl }],
-                } = JSON.parse(body)
-                resolve({ versionTag, downloadUrl })
-            }
-        })
-    })
+    const data = execSync(`curl -s ${RELEASE_API_URL}`)
+    const {
+        tag_name: versionTag,
+        assets: [{ browser_download_url: downloadUrl }],
+    } = JSON.parse(data)
+    return { versionTag, downloadUrl }
+}
+
+async function downloadFile(urlPath, filePath) {
+    execSync(`curl -s -L -o '${filePath}' '${urlPath}'`)
+}
+
+async function removeFile(filepath) {
+    execSync(`rm -rf ${filepath}`)
 }
 
 async function cleanYvmDir() {
     await Promise.all(
         ['yvm.sh', 'yvm.js', 'yvm-exec.js', 'node_modules']
             .map(filename => `${YVM_DIR}/${filename}`)
-            .map(filepath => fs.remove(filepath))
-            .map(promise => promise.catch(log.info)),
+            .map(removeFile)
+            .map(promise => promise.catch(log)),
     )
 }
 
@@ -89,7 +79,7 @@ async function ensureRC(rcFile) {
 }
 
 async function run() {
-    const yvmDirectoryExists = fs.ensureDir(YVM_DIR)
+    const yvmDirectoryExists = ensureDir(YVM_DIR)
     let zipFile, versionTag
     if (USE_LOCAL) {
         zipFile = 'artifacts/yvm.zip'
@@ -114,7 +104,7 @@ async function run() {
 
     const ongoingTasks = []
     if (!USE_LOCAL) {
-        ongoingTasks.push(fs.unlink(zipFile))
+        ongoingTasks.push(removeFile(zipFile))
     }
     if (versionTag) {
         ongoingTasks.push(saveVersion(versionTag))
