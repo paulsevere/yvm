@@ -4,16 +4,29 @@ const { execSync } = require('child_process')
 
 const log = console.error.bind(console) // eslint-disable-line no-console
 
-const HOME = process.env.HOME || os.homedir()
-const RELEASE_API_URL = 'https://d236jo9e8rrdox.cloudfront.net/yvm-releases'
-const USE_LOCAL = process.env.USE_LOCAL || false
-const INSTALL_VERSION = process.env.INSTALL_VERSION || null
-const YVM_DIR = process.env.YVM_INSTALL_DIR || `${HOME}/.yvm`
-const ZIP_DOWNLOAD_PATH = `${YVM_DIR}/yvm.zip`
-const SH_INSTALL_PATH = `${YVM_DIR}/yvm.sh`
-const YVM_DIR_VARIABLE = 'YVM_DIR'
-const EXPORT_YVM_DIR_STRING = `export ${YVM_DIR_VARIABLE}=${YVM_DIR}`
-const EXECUTE_SOURCE_STRING = `[ -r $${YVM_DIR_VARIABLE}/yvm.sh ] && source $${YVM_DIR_VARIABLE}/yvm.sh`
+function getConfig() {
+    const home = process.env.HOME || os.homedir()
+    const useLocal = process.env.USE_LOCAL || false
+    const yvmDir = process.env.YVM_INSTALL_DIR || `${home}/.yvm`
+    const yvmDirVarName = 'YVM_DIR'
+    return {
+        paths: {
+            home,
+            yvm: yvmDir,
+            yvmSh: `${yvmDir}/yvm.sh`,
+            zip: `${useLocal ? 'artifacts' : yvmDir}/yvm.zip`,
+        },
+        rcStrings: [
+            `[ -r $${yvmDirVarName}/yvm.sh ] && source $${yvmDirVarName}/yvm.sh`,
+            `export ${yvmDirVarName}=${yvmDir}`,
+        ],
+        releaseApiUrl: 'https://d236jo9e8rrdox.cloudfront.net/yvm-releases',
+        useLocal,
+        version: {
+            tagName: process.env.INSTALL_VERSION || null,
+        },
+    }
+}
 
 /**
  * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions
@@ -32,8 +45,8 @@ function getVersionDownloadUrl(version) {
     return `https://github.com/tophat/yvm/releases/download/${version}/yvm.zip`
 }
 
-async function getLatestYvmVersion() {
-    const data = execSync(`curl -s ${RELEASE_API_URL}`)
+async function getLatestYvmVersion(releaseApiUrl) {
+    const data = execSync(`curl -s ${releaseApiUrl}`)
     const {
         tag_name: tagName,
         assets: [{ browser_download_url: downloadUrl }],
@@ -49,32 +62,31 @@ async function removeFile(filePath) {
     execSync(`rm -rf ${filePath}`)
 }
 
-async function cleanYvmDir() {
+async function cleanYvmDir(yvmPath) {
     await Promise.all(
         ['yvm.sh', 'yvm.js', 'yvm-exec.js', 'node_modules']
-            .map(file => `${YVM_DIR}/${file}`)
+            .map(file => `${yvmPath}/${file}`)
             .map(removeFile)
             .map(promise => promise.catch(log)),
     )
 }
 
-async function unzipFile(filePath) {
-    execSync(`unzip -o -q ${filePath} -d ${YVM_DIR}`)
+async function unzipFile(filePath, yvmPath) {
+    execSync(`unzip -o -q ${filePath} -d ${yvmPath}`)
 }
 
-async function saveVersion(versionTag) {
-    const filePath = `${YVM_DIR}/.version`
+async function saveVersion(versionTag, yvmPath) {
+    const filePath = `${yvmPath}/.version`
     fs.writeFileSync(filePath, `{ "version": "${versionTag}" }`)
 }
 
-async function ensureYvmScriptExecutable() {
-    execSync(`chmod +x ${SH_INSTALL_PATH}`)
+async function ensureScriptExecutable(filePath) {
+    execSync(`chmod +x ${filePath}`)
 }
 
-async function ensureRC(rcFile) {
+async function ensureRC(rcFile, stringsToEnsure) {
     if (!fs.statSync(rcFile)) return
     let contents = fs.readFileSync(rcFile).toString()
-    const stringsToEnsure = [EXPORT_YVM_DIR_STRING, EXECUTE_SOURCE_STRING]
     const linesAppended = stringsToEnsure.map(string => {
         const finalString = `\n${string}`
         if (contents.includes(string)) {
@@ -92,45 +104,45 @@ async function ensureRC(rcFile) {
 }
 
 async function run() {
-    const yvmDirectoryExists = ensureDir(YVM_DIR)
-    const zipFile = USE_LOCAL ? 'artifacts/yvm.zip' : ZIP_DOWNLOAD_PATH
-    const version = {}
-    if (!USE_LOCAL) {
-        if (INSTALL_VERSION) {
-            version.downloadUrl = getVersionDownloadUrl(INSTALL_VERSION)
-            version.tagName = INSTALL_VERSION
+    const { version, paths, rcStrings, releaseApiUrl, useLocal } = getConfig()
+    const yvmDirectoryExists = ensureDir(paths.yvm)
+    if (!useLocal) {
+        if (version.tagName) {
+            version.downloadUrl = getVersionDownloadUrl(version.tagName)
         } else {
             log('Querying github release API to determine latest version')
-            Object.assign(version, await getLatestYvmVersion())
+            Object.assign(version, await getLatestYvmVersion(releaseApiUrl))
         }
-        await downloadFile(version.downloadUrl, zipFile)
+        await downloadFile(version.downloadUrl, paths.zip)
     }
     if (version.tagName) {
         log(`Installing Version: ${version.tagName}`)
     }
     await yvmDirectoryExists
-    await cleanYvmDir()
-    await unzipFile(zipFile)
+    await cleanYvmDir(paths.yvm)
+    await unzipFile(paths.zip, paths.yvm)
 
     const ongoingTasks = []
-    if (!USE_LOCAL) {
-        ongoingTasks.push(removeFile(zipFile))
+    if (!useLocal) {
+        ongoingTasks.push(removeFile(paths.zip))
     }
     if (version.tagName) {
-        ongoingTasks.push(saveVersion(version.tagName))
+        ongoingTasks.push(saveVersion(version.tagName, paths.yvm))
     }
-    ongoingTasks.push(ensureYvmScriptExecutable())
+    ongoingTasks.push(ensureScriptExecutable(paths.yvmSh))
     const updatingShellConfigs = ['.bashrc', '.zshrc']
-        .map(name => `${HOME}/${name}`)
-        .map(ensureRC)
+        .map(file => `${paths.home}/${file}`)
+        .map(filePath => ensureRC(filePath, rcStrings))
     ongoingTasks.push(...updatingShellConfigs)
     await Promise.all(ongoingTasks)
 
-    log(`yvm successfully installed in ${YVM_DIR} as ${SH_INSTALL_PATH}
-Open another terminal window to start using it, or type "source ${SH_INSTALL_PATH}"`)
+    log(`yvm successfully installed in ${paths.yvm} as ${paths.yvmSh}
+Open another terminal window to start using, or type "source ${paths.yvmSh}"`)
 }
 
-run().catch(error => {
-    log('yvm installation failed')
-    log(error)
-})
+if (!module.parent) {
+    run().catch(error => {
+        log('yvm installation failed')
+        log(error)
+    })
+}
