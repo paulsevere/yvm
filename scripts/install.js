@@ -15,6 +15,14 @@ const YVM_DIR_VARIABLE = 'YVM_DIR'
 const EXPORT_YVM_DIR_STRING = `export ${YVM_DIR_VARIABLE}=${YVM_DIR}`
 const EXECUTE_SOURCE_STRING = `[ -r $${YVM_DIR_VARIABLE}/yvm.sh ] && source $${YVM_DIR_VARIABLE}/yvm.sh`
 
+/**
+ * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions
+ * @param {string} src to be escaped
+ */
+function escapeRegExp(src) {
+    return src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 async function ensureDir(dirPath) {
     if (fs.existsSync(dirPath)) return
     fs.mkdirSync(dirPath)
@@ -65,16 +73,23 @@ async function ensureYvmScriptExecutable() {
 
 async function ensureRC(rcFile) {
     if (!fs.statSync(rcFile)) return
-    const contents = fs.readFileSync(rcFile)
+    let contents = fs.readFileSync(rcFile).toString()
     const stringsToEnsure = [EXPORT_YVM_DIR_STRING, EXECUTE_SOURCE_STRING]
     const linesAppended = stringsToEnsure.map(string => {
-        if (contents.includes(string)) return false
-        fs.appendFileSync(rcFile, `\n${string}`)
+        if (contents.includes(string)) {
+            contents = contents.replace(
+                new RegExp(`\n.*${escapeRegExp(string)}.*\n`),
+                `\n${string}\n`,
+            )
+            return false
+        }
+        contents += `\n${string}`
         return true
     })
     if (linesAppended.some(a => a)) {
-        fs.appendFileSync(rcFile, '\n')
+        contents += '\n'
     }
+    fs.writeFileSync(rcFile, contents)
 }
 
 async function run() {
@@ -116,4 +131,7 @@ async function run() {
 Open another terminal window to start using it, or type "source ${SH_INSTALL_PATH}"`)
 }
 
-run()
+run().catch(error => {
+    log('yvm installation failed')
+    log(error)
+})
