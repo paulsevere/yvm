@@ -45,14 +45,14 @@ async function downloadFile(urlPath, filePath) {
     execSync(`curl -s -L -o '${filePath}' '${urlPath}'`)
 }
 
-async function removeFile(filepath) {
-    execSync(`rm -rf ${filepath}`)
+async function removeFile(filePath) {
+    execSync(`rm -rf ${filePath}`)
 }
 
 async function cleanYvmDir() {
     await Promise.all(
         ['yvm.sh', 'yvm.js', 'yvm-exec.js', 'node_modules']
-            .map(filename => `${YVM_DIR}/${filename}`)
+            .map(file => `${YVM_DIR}/${file}`)
             .map(removeFile)
             .map(promise => promise.catch(log)),
     )
@@ -76,14 +76,13 @@ async function ensureRC(rcFile) {
     let contents = fs.readFileSync(rcFile).toString()
     const stringsToEnsure = [EXPORT_YVM_DIR_STRING, EXECUTE_SOURCE_STRING]
     const linesAppended = stringsToEnsure.map(string => {
+        const finalString = `\n${string}`
         if (contents.includes(string)) {
-            contents = contents.replace(
-                new RegExp(`\n.*${escapeRegExp(string)}.*\n`),
-                `\n${string}\n`,
-            )
+            const matchString = new RegExp(`\n.*${escapeRegExp(string)}.*`)
+            contents = contents.replace(matchString, finalString)
             return false
         }
-        contents += `\n${string}`
+        contents += finalString
         return true
     })
     if (linesAppended.some(a => a)) {
