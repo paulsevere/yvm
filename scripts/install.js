@@ -27,10 +27,10 @@ function getVersionDownloadUrl(version) {
 async function getLatestYvmVersion() {
     const data = execSync(`curl -s ${RELEASE_API_URL}`)
     const {
-        tag_name: versionTag,
+        tag_name: tagName,
         assets: [{ browser_download_url: downloadUrl }],
     } = JSON.parse(data)
-    return { versionTag, downloadUrl }
+    return { tagName, downloadUrl }
 }
 
 async function downloadFile(urlPath, filePath) {
@@ -79,23 +79,20 @@ async function ensureRC(rcFile) {
 
 async function run() {
     const yvmDirectoryExists = ensureDir(YVM_DIR)
-    let zipFile, versionTag
-    if (USE_LOCAL) {
-        zipFile = 'artifacts/yvm.zip'
-    } else {
-        let downloadUrl
+    const zipFile = USE_LOCAL ? 'artifacts/yvm.zip' : ZIP_DOWNLOAD_PATH
+    const version = {}
+    if (!USE_LOCAL) {
         if (INSTALL_VERSION) {
-            downloadUrl = getVersionDownloadUrl(INSTALL_VERSION)
-            versionTag = INSTALL_VERSION
+            version.downloadUrl = getVersionDownloadUrl(INSTALL_VERSION)
+            version.tagName = INSTALL_VERSION
         } else {
             log('Querying github release API to determine latest version')
-            ;({ downloadUrl, versionTag } = await getLatestYvmVersion())
+            Object.assign(version, await getLatestYvmVersion())
         }
-        zipFile = ZIP_DOWNLOAD_PATH
-        await downloadFile(downloadUrl, zipFile)
+        await downloadFile(version.downloadUrl, zipFile)
     }
-    if (versionTag) {
-        log(`Installing Version: ${versionTag}`)
+    if (version.tagName) {
+        log(`Installing Version: ${version.tagName}`)
     }
     await yvmDirectoryExists
     await cleanYvmDir()
@@ -105,8 +102,8 @@ async function run() {
     if (!USE_LOCAL) {
         ongoingTasks.push(removeFile(zipFile))
     }
-    if (versionTag) {
-        ongoingTasks.push(saveVersion(versionTag))
+    if (version.tagName) {
+        ongoingTasks.push(saveVersion(version.tagName))
     }
     ongoingTasks.push(ensureYvmScriptExecutable())
     const updatingShellConfigs = ['.bashrc', '.zshrc']
