@@ -146,3 +146,9 @@ if (!module.parent) {
         log(error)
     })
 }
+
+module.exports = {
+    escapeRegExp,
+    getConfig,
+    run,
+}
